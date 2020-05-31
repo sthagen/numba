@@ -619,6 +619,7 @@ class TestNoneType(MemoryLeakMixin, TestCase):
             return njit(context["bar"])
         for line1, line2 in (
                 ("lst.append(None)", "lst.pop()"),
+                ("lst.append(None)", "del lst[0]"),
                 ("lst.append(None)", "lst.count(None)"),
                 ("lst.append(None)", "lst.index(None)"),
                 ("lst.append(None)", "lst.insert(0, None)"),
@@ -1015,6 +1016,7 @@ class TestListRefctTypes(MemoryLeakMixin, TestCase):
 
     def test_list_as_item_in_list(self):
         nested_type = types.ListType(types.int32)
+
         @njit
         def foo():
             la = List.empty_list(nested_type)
@@ -1029,6 +1031,7 @@ class TestListRefctTypes(MemoryLeakMixin, TestCase):
 
     def test_array_as_item_in_list(self):
         nested_type = types.Array(types.float64, 1, 'C')
+
         @njit
         def foo():
             l = List.empty_list(nested_type)
@@ -1040,6 +1043,28 @@ class TestListRefctTypes(MemoryLeakMixin, TestCase):
         got = foo()
         # Need to compare the nested arrays
         self.assertTrue(np.all(expected[0] == got[0]))
+
+    def test_array_pop_from_single_value_list(self):
+        @njit
+        def foo():
+            l = List((np.zeros((1,)),))
+            l.pop()
+            return l
+
+        expected, got = foo.py_func(), foo()
+        # Need to compare the nested arrays
+        self.assertEqual(len(expected), 0)
+        self.assertEqual(len(got), 0)
+        # FIXME comparison of empty array-typed lists fails
+        # self.assertEqual(expected, got)
+
+    def test_5264(self):
+        # Test the reproducer from #5264 and make sure it doesn't segfault
+        float_array = types.float64[:]
+        l = List.empty_list(float_array)
+        l.append(np.ones(3,dtype=np.float64))
+        l.pop()
+        self.assertEqual(0, len(l))
 
     def test_jitclass_as_item_in_list(self):
 
@@ -1080,6 +1105,22 @@ class TestListRefctTypes(MemoryLeakMixin, TestCase):
             np.testing.assert_allclose(one.array, two.array)
 
         [bag_equal(a, b) for a, b in zip(expected, got)]
+
+    def test_4960(self):
+        # Test the reproducer from #4960 and make sure it doesn't segfault
+        @jitclass([('value', int32)])
+        class Simple(object):
+            def __init__(self, value):
+                self.value = value
+
+        @njit
+        def foo():
+            l = List((Simple(23),Simple(24)))
+            l.pop()
+            return l
+
+        l = foo()
+        self.assertEqual(1, len(l))
 
     def test_storage_model_mismatch(self):
         # https://github.com/numba/numba/issues/4520
@@ -1282,6 +1323,7 @@ class TestImmutable(MemoryLeakMixin, TestCase):
 
     def test_append_fails(self):
         self.disable_leak_check()
+
         @njit
         def foo():
             l = List()
